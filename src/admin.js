@@ -165,6 +165,13 @@ th{color:var(--muted);font-size:13px}
 <div id="statusBox" style="font-size:14px"></div>
 <div class="row" style="margin-top:12px"><button class="btn ghost" id="refreshStatusBtn" type="button">刷新状态</button></div>
 </section>
+
+<section class="card" id="viewsCard" style="display:none">
+<h2>📊 访问统计</h2>
+<p class="hint">只计访问次数，不记 IP、不记个人信息。首页、模板页、订单页每次打开记 1 次。</p>
+<div id="viewsBox" style="font-size:14px">加载中…</div>
+<div class="row" style="margin-top:12px"><button class="btn ghost" id="refreshViewsBtn" type="button">刷新统计</button></div>
+</section>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -185,13 +192,13 @@ async function api(path, method, body) {
 }
 function showAuthed(email) {
   $('who').textContent = email ? ('站长：' + email) : '';
-  for (const id of ['modelsCard', 'editCard', 'rulesCard', 'creditsCard', 'statusCard']) $(id).style.display = email ? '' : 'none';
+  for (const id of ['modelsCard', 'editCard', 'rulesCard', 'creditsCard', 'statusCard', 'viewsCard']) $(id).style.display = email ? '' : 'none';
   $('loginCard').style.display = email ? 'none' : '';
 }
 async function checkMe() {
   try {
     const me = await api('/api/auth/me');
-    if (me.user && me.isAdmin) { showAuthed(me.user.email); loadModels(); loadRules(); loadStatus(); }
+    if (me.user && me.isAdmin) { showAuthed(me.user.email); loadModels(); loadRules(); loadStatus(); loadViews(); }
     else if (me.user) { setStatus($('loginStatus'), '当前账号不是站长（邮箱与 ADMIN_EMAIL 不一致），请换站长邮箱登录。', false); showAuthed(''); }
     else showAuthed('');
   } catch (e) { showAuthed(''); }
@@ -384,6 +391,19 @@ async function loadStatus() {
   } catch (e) { $('statusBox').textContent = '状态加载失败：' + e.message; }
 }
 $('refreshStatusBtn').addEventListener('click', loadStatus);
+
+// ---- 访问统计 ----
+async function loadViews() {
+  try {
+    const d = await api('/api/admin/stats/views');
+    const days = (d.last7 || []).map((x) => '<div>' + escH(x.day) + '：' + x.count + ' 次</div>').join('');
+    const top = (d.top || []).map((x) => '<div>' + escH(x.page) + '：' + x.count + ' 次</div>').join('');
+    $('viewsBox').innerHTML = '<p>总访问量：<strong>' + (d.total || 0) + '</strong> 次</p>'
+      + '<p style="margin-top:8px">近 7 天：</p>' + (days || '<p>暂无数据</p>')
+      + '<p style="margin-top:8px">各页 Top 5：</p>' + (top || '<p>暂无数据</p>');
+  } catch (e) { $('viewsBox').textContent = '统计加载失败：' + e.message; }
+}
+$('refreshViewsBtn').addEventListener('click', loadViews);
 
 checkMe();
 </script>

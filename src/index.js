@@ -132,6 +132,23 @@ function dayString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// IndexNow 密钥（Bing/Yandex 收录验证用）：这是公开的验证串，不是密码，
+// 按规范放在 /{key}.txt 公开返回。换 key 要同步改提交时的 key。
+const INDEXNOW_KEY = "4d4a912c68e1999a05e29741ba00e981";
+
+// 访问计数（推广落地）：首页/模板页/订单页每次打开记 1 次；
+// 只计次数，不记 IP、不记个人信息；一天一页一行，写操作极少。
+async function recordPageView(db, page) {
+  const day = dayString();
+  await db
+    .prepare(
+      "INSERT INTO page_views (day, page, count) VALUES (?, ?, 1) ON CONFLICT(day, page) DO UPDATE SET count = count + 1",
+    )
+    .bind(day, page)
+    .run()
+    .catch(() => {});
+}
+
 async function checkGuestLimit(env, ip) {
   const key = `rate:${ip}:${dayString()}`;
   try {
@@ -893,6 +910,42 @@ export default {
         feishuConfigured: feishu.configured,
       });
     }
+    // ---------- 访问统计（推广落地）：只计次数，不记 IP、不记个人信息 ----------
+    if (path === "/api/admin/stats/views" && req.method === "GET") {
+      const user = await getSessionUser(env.DB, req);
+      if (!user || !isAdmin(env, user))
+        return json({ error: "只有站长能进后台" }, 403);
+      const totalRow = await env.DB.prepare(
+        "SELECT COALESCE(SUM(count), 0) AS t FROM page_views",
+      )
+        .first()
+        .catch(() => ({ t: 0 }));
+      const rows = await env.DB.prepare(
+        "SELECT day, SUM(count) AS count FROM page_views GROUP BY day ORDER BY day DESC LIMIT 7",
+      )
+        .all()
+        .catch(() => ({ results: [] }));
+      const byDay = new Map((rows.results || []).map((r) => [r.day, r.count]));
+      // 近 7 天（含今天），没访问的日子补 0
+      const last7 = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(Date.now() - i * 86400000)
+          .toISOString()
+          .slice(0, 10);
+        last7.push({ day: d, count: byDay.get(d) || 0 });
+      }
+      const top = await env.DB.prepare(
+        "SELECT page, SUM(count) AS count FROM page_views GROUP BY page ORDER BY count DESC LIMIT 5",
+      )
+        .all()
+        .catch(() => ({ results: [] }));
+      return json({
+        ok: true,
+        total: totalRow?.t || 0,
+        last7,
+        top: top.results || [],
+      });
+    }
     if (path === "/api/admin/credits/grant" && req.method === "POST") {
       const user = await getSessionUser(env.DB, req);
       if (!user || !isAdmin(env, user))
@@ -930,6 +983,7 @@ export default {
     // ---------- 订单页 / 会员中心 / 模板库（第 3 周） ----------
     if (path === "/orders/new" || path === "/en/orders/new") {
       const lang = path.startsWith("/en/") ? "en" : "zh";
+      if (ctx?.waitUntil) ctx.waitUntil(recordPageView(env.DB, path));
       return html(
         orderPage(lang, baseUrl(req), {
           paypalConfigured: paypalConfigured(env),
@@ -945,6 +999,7 @@ export default {
     }
     if (path === "/templates" || path === "/en/templates") {
       const lang = path.startsWith("/en/") ? "en" : "zh";
+      if (ctx?.waitUntil) ctx.waitUntil(recordPageView(env.DB, path));
       return html(templatesPage(lang, baseUrl(req)));
     }
     if (path === "/resumes" || path === "/en/resumes") {
@@ -1600,6 +1655,15 @@ export default {
         },
       });
     }
+    // IndexNow 密钥文件（Bing/Yandex 收录验证）：/{key}.txt 返回 key 本身。
+    if (path === `/${INDEXNOW_KEY}.txt`) {
+      return new Response(INDEXNOW_KEY, {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          ...securityHeaders(),
+        },
+      });
+    }
     if (path === "/sitemap.xml") {
       return new Response(sitemapIndex(baseUrl(req)), {
         headers: {
@@ -1756,6 +1820,7 @@ export default {
           headers: { Location: "/en/", ...securityHeaders() },
         });
       }
+      if (ctx?.waitUntil) ctx.waitUntil(recordPageView(env.DB, "/"));
       return html(homePage("zh", baseUrl(req)));
     }
     if (path === "/en" || path === "/en/index.html") {
@@ -1765,6 +1830,7 @@ export default {
       });
     }
     if (path === "/en/") {
+      if (ctx?.waitUntil) ctx.waitUntil(recordPageView(env.DB, "/en/"));
       return html(homePage("en", baseUrl(req)));
     }
 
