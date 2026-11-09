@@ -194,3 +194,61 @@ INSERT OR IGNORE INTO ai_rules (key, value, version, updated_at) VALUES
 ('allow_number_edit', '0', 1, unixepoch() * 1000),
 ('force_star', '1', 1, unixepoch() * 1000),
 ('default_intensity', 'standard', 1, unixepoch() * 1000);
+
+-- ============ 第 3 周：套餐 / 订单扩展 / 会员 / 站内通知 / PayPal 事件 ============
+-- plans：套餐目录（后台可改价；金额一律存分；USDT 用 sun 精确整数；-1 = 不限）
+CREATE TABLE IF NOT EXISTS plans (
+  slug TEXT PRIMARY KEY,
+  name_zh TEXT NOT NULL,
+  name_en TEXT NOT NULL,
+  price_cents INTEGER NOT NULL,
+  usdt_sun INTEGER NOT NULL,
+  rewrite_credits INTEGER NOT NULL,
+  export_credits INTEGER NOT NULL,
+  duration_days INTEGER NOT NULL DEFAULT 0,
+  refill_monthly INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1
+);
+INSERT OR IGNORE INTO plans (slug, name_zh, name_en, price_cents, usdt_sun, rewrite_credits, export_credits, duration_days, refill_monthly, is_active) VALUES
+('single', '单次改写', 'Single Rewrite', 990, 1990000, 1, 1, 0, 0, 1),
+('monthly', '包月会员', 'Monthly', 1990, 3990000, 30, -1, 30, 0, 1),
+('lifetime', '终身会员', 'Lifetime', 9900, 19990000, 50, -1, 0, 1, 1);
+
+-- orders 扩展字段（D1 支持 ALTER TABLE ADD COLUMN；线上已建的表用迁移补）
+ALTER TABLE orders ADD COLUMN order_no TEXT;
+ALTER TABLE orders ADD COLUMN payer_note TEXT;
+ALTER TABLE orders ADD COLUMN screenshot_key TEXT;
+ALTER TABLE orders ADD COLUMN reject_reason TEXT;
+ALTER TABLE orders ADD COLUMN expires_at INTEGER;
+ALTER TABLE orders ADD COLUMN reviewed_at INTEGER;
+ALTER TABLE orders ADD COLUMN last_reminded_at INTEGER;
+
+-- memberships：会员记录（包月有到期日；终身不过期、每月由 cron 补满改写额度到 50）
+CREATE TABLE IF NOT EXISTS memberships (
+  user_id INTEGER NOT NULL,
+  plan TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  expires_at INTEGER,
+  last_refill_at INTEGER,
+  status TEXT NOT NULL DEFAULT 'active',
+  PRIMARY KEY (user_id, plan)
+);
+
+-- notifications：站内通知（开通/拒绝/到期提醒/渠道故障兜底）
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  is_read INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+-- paypal_events：PayPal Webhook 幂等表（同一事件只处理一次）
+CREATE TABLE IF NOT EXISTS paypal_events (
+  event_id TEXT PRIMARY KEY,
+  order_id INTEGER,
+  payload TEXT,
+  created_at INTEGER NOT NULL
+);

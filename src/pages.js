@@ -1,9 +1,9 @@
 // 简历过筛 ResumePass — 首页模板（中英文共用一套结构，两套词典）
 // 设计规范 §1：主色钢蓝 #1668B4、近白底 #F7F8F9、圆角 10px、内容最大宽 1060px；
 // 移动优先：按钮 ≥44px、输入框 ≥16px（不触发手机自动放大）；输入框与上方标题左对齐同宽。
-import { I18N } from './i18n.js';
+import { I18N } from "./i18n.js";
 
-const CSS = `
+export const CSS = `
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--blue:#1668B4;--blue-d:#0f4f8a;--bg:#F7F8F9;--card:#fff;--text:#1a1d21;--muted:#5b6470;--line:#e3e7ec;--green:#1e7d32;--amber:#b26a00;--red:#c62828}
 html{font-size:16px}
@@ -90,34 +90,53 @@ footer.site{margin:48px 0 32px;text-align:center;color:var(--muted);font-size:13
 `;
 
 function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  return String(s ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
 }
 
 export function homePage(lang, base) {
   const t = I18N[lang];
-  const other = lang === 'zh' ? 'en' : 'zh';
-  const otherLabel = lang === 'zh' ? 'EN' : '中文';
-  const canonical = lang === 'zh' ? `${base}/` : `${base}/en/`;
+  const other = lang === "zh" ? "en" : "zh";
+  const otherLabel = lang === "zh" ? "EN" : "中文";
+  const canonical = lang === "zh" ? `${base}/` : `${base}/en/`;
   const faqJson = {
-    '@context': 'https://schema.org',
-    '@type': 'FAQPage',
-    mainEntity: t.faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: t.faq.map((f) => ({
+      "@type": "Question",
+      name: f.q,
+      acceptedAnswer: { "@type": "Answer", text: f.a },
+    })),
   };
   const siteJson = {
-    '@context': 'https://schema.org',
-    '@type': 'WebSite',
-    name: lang === 'zh' ? '简历过筛' : 'ResumePass',
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: lang === "zh" ? "简历过筛" : "ResumePass",
     url: canonical,
     inLanguage: t.lang,
   };
   const crumbJson = {
-    '@context': 'https://schema.org',
-    '@type': 'BreadcrumbList',
-    itemListElement: [{ '@type': 'ListItem', position: 1, name: t.navHome, item: canonical }],
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: t.navHome, item: canonical },
+    ],
   };
-  const faqHtml = t.faq.map((f) => `<div class="faq-item"><h3>${esc(f.q)}</h3><p>${esc(f.a)}</p></div>`).join('');
+  const faqHtml = t.faq
+    .map(
+      (f) =>
+        `<div class="faq-item"><h3>${esc(f.q)}</h3><p>${esc(f.a)}</p></div>`,
+    )
+    .join("");
   // 联系方式按语言分发：中文版只显示微信 + QQ 二维码；英文版只显示 Telegram（站长尚未提供，暂不展示）
-  const contactHtml = lang === 'zh' ? `
+  const contactHtml =
+    lang === "zh"
+      ? `
 <section class="card" style="margin-top:48px;text-align:center">
 <h2>${esc(t.contactTitle)}</h2>
 <p class="hint">${esc(t.contactSub)}</p>
@@ -125,7 +144,8 @@ export function homePage(lang, base) {
 <div class="qr-item"><img src="/img/wechat-consult-qr.png" alt="${esc(t.contactWechat)}" loading="lazy" width="140" height="140"><p>${esc(t.contactWechat)}</p></div>
 <div class="qr-item"><img src="/img/qq-consult-qr.png" alt="${esc(t.contactQQ)}" loading="lazy" width="140" height="140"><p>${esc(t.contactQQ)}</p></div>
 </div>
-</section>` : '';
+</section>`
+      : "";
 
   return `<!DOCTYPE html>
 <html lang="${t.lang}">
@@ -149,11 +169,13 @@ export function homePage(lang, base) {
 </head>
 <body>
 <header class="site"><nav class="nav" aria-label="main">
-<a class="brand" href="${lang === 'zh' ? '/' : '/en/'}">${lang === 'zh' ? '简历过筛' : 'ResumePass'}<small>${lang === 'zh' ? 'ATS 评分' : 'ATS Score'}</small></a>
-<a class="item active" href="${lang === 'zh' ? '/' : '/en/'}">${esc(t.navHome)}</a>
+<a class="brand" href="${lang === "zh" ? "/" : "/en/"}">${lang === "zh" ? "简历过筛" : "ResumePass"}<small>${lang === "zh" ? "ATS 评分" : "ATS Score"}</small></a>
+<a class="item active" href="${lang === "zh" ? "/" : "/en/"}">${esc(t.navHome)}</a>
 <a class="item" href="#tool">${esc(t.navOptimize)}</a>
+<a class="item" href="${lang === "zh" ? "/templates" : "/en/templates"}">${esc(t.navTemplates)}</a>
+<a class="item" href="${lang === "zh" ? "/me" : "/en/me"}">${esc(t.navMember)}</a>
 <a class="item" href="#faq">${esc(t.navFaq)}</a>
-<a class="lang" href="${other === 'zh' ? '/' : '/en/'}">${otherLabel}</a>
+<a class="lang" href="${other === "zh" ? "/" : "/en/"}">${otherLabel}</a>
 </nav></header>
 <main class="wrap">
 <section class="hero">
@@ -161,6 +183,16 @@ export function homePage(lang, base) {
 <p class="sub">${esc(t.heroSub)}</p>
 <div class="cta-row"><a class="btn" href="#tool">${esc(t.heroCta)}</a><span style="color:var(--muted);font-size:15px">${esc(t.priceAnchor)}</span></div>
 <p class="price">${esc(t.priceNote)}</p>
+</section>
+
+<section class="card" id="guideCard" style="display:none;border:2px solid var(--blue);background:#f0f6fc">
+<h2>${lang === "zh" ? "新手向导（3 步，30 秒）" : "Quick start (3 steps, 30 seconds)"}</h2>
+<div class="steps">
+<div class="step"><div class="n">1</div><h3>${lang === "zh" ? "粘贴简历" : "Paste your resume"}</h3><p>${lang === "zh" ? "把简历全文粘到下方输入框，或上传 .txt 文件；也可以先去模板库套用一套模板。" : "Paste your full resume below, or upload a .txt file. You can also pick a template first."}</p></div>
+<div class="step"><div class="n">2</div><h3>${lang === "zh" ? "贴上 JD" : "Paste the JD"}</h3><p>${lang === "zh" ? "把目标岗位的 JD 粘贴进来，评分会按 JD 定向算关键词缺口；不贴也能评通用分。" : "Paste the job description to get JD-targeted keyword gaps. Without it you still get a general score."}</p></div>
+<div class="step"><div class="n">3</div><h3>${lang === "zh" ? "看分、按缺口改" : "See your score & fix the gaps"}</h3><p>${lang === "zh" ? "1 秒出分：总分、6 个维度、缺口清单、逐行点评。登录后可用 AI 按 JD 改写，改完再评分看涨分。" : "Get your score in 1 second: total, 6 dimensions, gap list and line notes. Log in to rewrite with AI and re-score."}</p></div>
+</div>
+<div class="tool-actions"><button class="btn" id="guideStartBtn" type="button">${lang === "zh" ? "开始测分" : "Start scoring"}</button><button class="btn ghost" id="guideSkipBtn" type="button">${lang === "zh" ? "跳过向导" : "Skip"}</button></div>
 </section>
 
 <section class="card" id="tool">
@@ -306,9 +338,93 @@ function renderResult(d) {
     + '<div class="dim">' + dims + '</div>'
     + (notes.length ? '<p class="note">' + notes.map(escH).join('<br>') + '</p>' : '')
     + gaps + lines
-    + '<p class="note">' + escH(T.pasteNote) + '</p>';
+    + '<p class="note">' + escH(T.pasteNote) + '</p>'
+    + '<div class="tool-actions"><button class="btn ghost" id="posterBtn" type="button">' + escH(LANG === 'en' ? 'Generate share poster' : '生成分享海报') + '</button><span id="posterStatus" style="font-size:14px;color:var(--muted)"></span></div>';
   $('result').className = 'result show';
+  const posterBtn = document.getElementById('posterBtn');
+  if (posterBtn) posterBtn.addEventListener('click', () => makePoster(d, posterBtn));
   $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+// 分享海报：分数卡片图（540×960），浏览器端 canvas 绘制 → 可下载 PNG，也可保存到站内（R2）分享
+async function makePoster(d, btn) {
+  const statusEl = document.getElementById('posterStatus');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = LANG === 'en' ? 'Generating…' : '生成中…';
+  try {
+    const W = 540, H = 960;
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const c = cv.getContext('2d');
+    c.fillStyle = '#F7F8F9'; c.fillRect(0, 0, W, H);
+    c.fillStyle = '#1668B4'; c.fillRect(0, 0, W, 300);
+    c.fillStyle = '#fff'; c.font = 'bold 34px sans-serif'; c.textAlign = 'center';
+    c.fillText(LANG === 'en' ? 'ResumePass' : '简历过筛', W / 2, 70);
+    c.font = '20px sans-serif';
+    c.fillText(LANG === 'en' ? 'My resume ATS score' : '我的简历 ATS 评分', W / 2, 110);
+    c.font = 'bold 120px sans-serif';
+    c.fillText(String(d.total), W / 2, 240);
+    c.font = '22px sans-serif';
+    const bandTxt = d.band === 'excellent' ? T.bandExcellent : d.band === 'good' ? T.bandGood : T.bandWeak;
+    c.fillText(bandTxt + ' · ' + T.passLine, W / 2, 282);
+    c.fillStyle = '#1a1d21'; c.textAlign = 'left'; c.font = '20px sans-serif';
+    const dims = [
+      [T.dims.d1, d.dims.d1], [T.dims.d3, d.dims.d3], [T.dims.d4, d.dims.d4],
+      [T.dims.d5, d.dims.d5], [T.dims.d6, d.dims.d6],
+    ];
+    let y = 360;
+    for (const [name, val] of dims) {
+      if (val === null || val === undefined) continue;
+      c.fillStyle = '#5b6470'; c.fillText(name, 48, y);
+      c.fillStyle = '#e3e7ec'; c.fillRect(180, y - 14, 260, 12);
+      c.fillStyle = '#1668B4'; c.fillRect(180, y - 14, Math.round(260 * val / 100), 12);
+      c.fillStyle = '#1a1d21'; c.fillText(String(val), 452, y);
+      y += 44;
+    }
+    if (d.hasJD && d.gaps && d.gaps.missing && d.gaps.missing.length) {
+      c.fillStyle = '#c62828'; c.font = '18px sans-serif';
+      c.fillText((LANG === 'en' ? 'Missing keywords: ' : '缺失关键词：') + d.gaps.missing.slice(0, 3).map((g) => g.term).join('、'), 48, y + 10);
+    }
+    c.fillStyle = '#5b6470'; c.font = '18px sans-serif'; c.textAlign = 'center';
+    c.fillText(LANG === 'en' ? 'Scan to score your resume — free' : '扫码免费测你的简历', W / 2, 700);
+    if (LANG === 'zh') {
+      const qr = new Image();
+      qr.crossOrigin = 'anonymous';
+      await new Promise((resolve) => { qr.onload = resolve; qr.onerror = resolve; qr.src = '/img/wechat-consult-qr.png'; });
+      if (qr.naturalWidth) c.drawImage(qr, W / 2 - 90, 720, 180, 180);
+      c.fillStyle = '#5b6470'; c.font = '16px sans-serif';
+      c.fillText('简历过筛 · ATS 评分', W / 2, 930);
+    } else {
+      c.fillStyle = '#1668B4'; c.font = 'bold 22px sans-serif';
+      c.fillText('ResumePass', W / 2, 780);
+      c.fillStyle = '#5b6470'; c.font = '16px sans-serif';
+      c.fillText('Free ATS score in 1 second', W / 2, 812);
+    }
+    const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+    if (!blob) throw new Error('poster failed');
+    // 先本地下载
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'resume-score-' + d.total + '.png';
+    a.click();
+    // 再保存到站内（R2），拿到可分享链接
+    const buf = await blob.arrayBuffer();
+    let b64 = '';
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i += 8192) b64 += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+    const r = await fetch('/api/poster', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: btoa(b64), score: d.total }) });
+    const dd = await r.json();
+    if (r.ok && dd.url) {
+      statusEl.textContent = (LANG === 'en' ? 'Poster saved: ' : '海报已保存，可分享：') + location.origin + dd.url;
+    } else {
+      statusEl.textContent = LANG === 'en' ? 'Downloaded (share upload failed, you can still share the file)' : '已下载到本地（站内保存失败，仍可直接分享文件）';
+    }
+  } catch (e) {
+    statusEl.textContent = T.errServer;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
 // ---- 登录 + AI 改写 ----
@@ -484,6 +600,33 @@ $('translateBtn').addEventListener('click', async () => {
   } catch (e) { $('rewriteStatus').textContent = e.message || T.errServer; }
   finally { btn.disabled = false; btn.textContent = T.translateBtn; }
 });
+// ---- 新手向导：首次进站出现一次，可跳过 ----
+try {
+  if (!localStorage.getItem('rp_guide_seen')) {
+    $('guideCard').style.display = '';
+  }
+} catch (e) { /* 隐私模式下忽略 */ }
+$('guideStartBtn').addEventListener('click', () => {
+  try { localStorage.setItem('rp_guide_seen', '1'); } catch (e) {}
+  $('guideCard').style.display = 'none';
+  $('resume').focus();
+  document.getElementById('tool').scrollIntoView({ behavior: 'smooth' });
+});
+$('guideSkipBtn').addEventListener('click', () => {
+  try { localStorage.setItem('rp_guide_seen', '1'); } catch (e) {}
+  $('guideCard').style.display = 'none';
+});
+// ---- 模板库套用：从模板页过来时自动填入骨架 ----
+try {
+  const skel = localStorage.getItem('rp_template_skeleton');
+  if (skel) {
+    $('resume').value = skel;
+    localStorage.removeItem('rp_template_skeleton');
+    $('status').textContent = LANG === 'en' ? 'Template applied — paste your details over the placeholders, then score.' : '已套用模板：把方括号里的占位内容换成你自己的，再点评分。';
+    document.getElementById('tool').scrollIntoView({ behavior: 'smooth' });
+  }
+} catch (e) { /* 忽略 */ }
+
 refreshMe();
 </script>
 </body>
