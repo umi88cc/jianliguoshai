@@ -179,6 +179,38 @@ export function homePage(lang, base) {
 <div class="result" id="result"></div>
 </section>
 
+<section class="card" id="rewrite">
+<h2>${esc(t.rewriteTitle)}</h2>
+<p class="hint">${esc(t.rewriteHint)}</p>
+<div id="loginBox">
+<h3 style="font-size:16px">${esc(t.loginTitle)}</h3>
+<p class="hint">${esc(t.loginHint)}</p>
+<div class="tool-actions" style="margin-top:8px">
+<input id="loginEmail" type="email" placeholder="${esc(t.emailPh)}" style="flex:1;min-width:200px;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:16px" autocomplete="email">
+<button class="btn ghost" id="sendCodeBtn" type="button">${esc(t.sendCodeBtn)}</button>
+</div>
+<div class="tool-actions">
+<input id="loginCode" type="text" inputmode="numeric" maxlength="6" placeholder="${esc(t.codePh)}" style="flex:1;min-width:140px;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:16px">
+<button class="btn" id="loginBtn" type="button">${esc(t.loginBtn)}</button>
+<button class="btn ghost" id="logoutBtn" type="button" style="display:none">${esc(t.logoutBtn)}</button>
+</div>
+<p class="status" id="loginStatus"></p>
+</div>
+<label for="intensity">${esc(t.intensityLabel)}</label>
+<select id="intensity" style="width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:16px;background:#fff">
+<option value="conservative">${esc(t.intensityConservative)}</option>
+<option value="standard" selected>${esc(t.intensityStandard)}</option>
+<option value="aggressive">${esc(t.intensityAggressive)}</option>
+</select>
+<div class="tool-actions">
+<button class="btn" id="rewriteBtn" type="button">${esc(t.rewriteBtn)}</button>
+<button class="btn ghost" id="coverBtn" type="button">${esc(t.coverLetterBtn)}</button>
+<button class="btn ghost" id="translateBtn" type="button">${esc(t.translateBtn)}</button>
+</div>
+<p class="status" id="rewriteStatus" aria-live="polite"></p>
+<div class="result" id="rewriteResult"></div>
+</section>
+
 <section style="margin-top:48px">
 <h2 style="font-size:20px">${esc(t.howTitle)}</h2>
 <div class="steps">
@@ -278,6 +310,181 @@ function renderResult(d) {
   $('result').className = 'result show';
   $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+
+// ---- 登录 + AI 改写 ----
+let ME = null;
+let LAST_REWRITE = null;
+async function refreshMe() {
+  try {
+    const r = await fetch('/api/auth/me');
+    const d = await r.json();
+    ME = d.user || null;
+    if (ME) {
+      $('loginStatus').textContent = T.loggedInAs + ME.email + ' · rewrite 额度 ' + (d.credits ? d.credits.balance : 0);
+      $('logoutBtn').style.display = '';
+      $('loginEmail').style.display = 'none';
+      $('loginCode').style.display = 'none';
+      $('sendCodeBtn').style.display = 'none';
+      $('loginBtn').style.display = 'none';
+    } else {
+      $('loginStatus').textContent = '';
+      $('logoutBtn').style.display = 'none';
+      $('loginEmail').style.display = '';
+      $('loginCode').style.display = '';
+      $('sendCodeBtn').style.display = '';
+      $('loginBtn').style.display = '';
+    }
+  } catch (e) { /* 未登录时忽略 */ }
+}
+$('sendCodeBtn').addEventListener('click', async () => {
+  const email = $('loginEmail').value.trim();
+  if (!email) { $('loginStatus').textContent = T.emailPh; return; }
+  const btn = $('sendCodeBtn'); btn.disabled = true;
+  try {
+    const r = await fetch('/api/auth/send-code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    const d = await r.json();
+    $('loginStatus').textContent = !r.ok ? (d.error || T.errServer) : (d.devMode ? ('开发模式验证码：' + d.code) : '验证码已发到邮箱，请查收');
+  } catch (e) { $('loginStatus').textContent = T.errServer; }
+  finally { btn.disabled = false; }
+});
+$('loginBtn').addEventListener('click', async () => {
+  const email = $('loginEmail').value.trim();
+  const code = $('loginCode').value.trim();
+  if (!email || !code) { $('loginStatus').textContent = T.emailPh; return; }
+  const btn = $('loginBtn'); btn.disabled = true; btn.textContent = T.loginBtn + '…';
+  try {
+    const r = await fetch('/api/auth/verify-code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, code }) });
+    const d = await r.json();
+    if (!r.ok) { $('loginStatus').textContent = d.error || T.errServer; return; }
+    await refreshMe();
+  } catch (e) { $('loginStatus').textContent = T.errServer; }
+  finally { btn.disabled = false; btn.textContent = T.loginBtn; }
+});
+$('logoutBtn').addEventListener('click', async () => {
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (e) {}
+  ME = null;
+  await refreshMe();
+});
+async function pollTask(taskId, tries) {
+  for (let i = 0; i < (tries || 40); i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const r = await fetch('/api/tasks/' + taskId);
+      const d = await r.json();
+      if (d.status === 'done') return d.result;
+      if (d.status === 'failed') throw new Error(d.error || T.taskFailed);
+      $('rewriteStatus').textContent = T.rewriting + ' (' + (i + 1) + ')';
+    } catch (e) { if (e.message && e.message !== T.taskFailed) throw e; else throw e; }
+  }
+  throw new Error(T.taskFailed);
+}
+function renderRewrite(d) {
+  LAST_REWRITE = d;
+  let h = '';
+  if (!d.preview) {
+    const delta = (d.afterScore ?? 0) - (d.beforeScore ?? 0);
+    const deltaTxt = delta >= 0 ? '+' + delta : String(delta);
+    h = '<div class="score-head"><div class="score-num"><b>' + d.afterScore + '</b><span>' + escH(T.score) + '</span></div>'
+      + '<div><div style="font-size:16px">' + escH(T.rewriteBefore) + ' ' + d.beforeScore + ' → ' + escH(T.rewriteAfter) + ' ' + d.afterScore
+      + '（' + escH(T.rewriteDelta) + ' ' + deltaTxt + '）</div>'
+      + '<div style="color:var(--muted);font-size:14px;margin-top:4px">' + escH(d.source === 'ai' ? T.rewriteSourceAi : T.rewriteSourceRules) + '</div></div></div>';
+  } else {
+    h = '<div style="font-size:16px;font-weight:700">' + escH(T.rewritePreview) + '</div>'
+      + '<div style="color:var(--muted);font-size:14px;margin-top:4px">' + escH(d.source === 'ai' ? T.rewriteSourceAi : T.rewriteSourceRules) + '</div>';
+  }
+  if (d.summary) h += '<h3 style="margin-top:16px;font-size:16px">个人总结</h3><p style="font-size:15px">' + escH(d.summary) + '</p>';
+  h += '<h3 style="margin-top:16px;font-size:16px">逐条改动（勾选采纳）</h3><div class="lines">'
+    + d.bullets.map((b, i) => '<div class="line"><label style="display:flex;gap:8px;align-items:flex-start;font-weight:400;margin:0">'
+      + '<input type="checkbox" class="rw-accept" data-i="' + i + '" ' + (b.flagged ? '' : 'checked') + ' style="margin-top:4px;width:18px;height:18px;flex:none">'
+      + '<span><div class="txt" style="color:var(--muted);text-decoration:line-through">' + escH(b.original) + '</div>'
+      + '<div style="margin-top:4px">' + escH(b.rewritten) + '</div>'
+      + '<div class="chk" style="color:var(--muted)">' + escH(b.change_reason || '') + (b.flagged ? ' · <b style="color:var(--red)">' + escH(T.rewriteFlagged) + '</b>' : '') + '</div></span></label></div>').join('')
+    + '</div>';
+  if (d.missing_keywords && d.missing_keywords.length) {
+    h += '<p class="note">缺口关键词（只在真实做过的地方补）：' + d.missing_keywords.map(escH).join('、') + '</p>';
+  }
+  if (d.score_tips && d.score_tips.length) {
+    h += '<p class="note">' + d.score_tips.map(escH).join('<br>') + '</p>';
+  }
+  if (!d.preview) {
+    h += '<div class="tool-actions"><button class="btn" id="applyBtn" type="button">' + escH(T.rewriteApply) + '</button></div><p class="status" id="applyStatus"></p>';
+  } else {
+    h += '<p class="note">' + escH(T.rewriteBuyNote) + '</p>';
+  }
+  $('rewriteResult').innerHTML = h;
+  $('rewriteResult').className = 'result show';
+  const applyBtn = document.getElementById('applyBtn');
+  if (applyBtn) applyBtn.addEventListener('click', async () => {
+    const accepted = [...document.querySelectorAll('.rw-accept:checked')].map((c) => Number(c.dataset.i));
+    applyBtn.disabled = true;
+    try {
+      const r = await fetch('/api/rewrites/' + d.rewriteId + '/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accepted }) });
+      const dd = await r.json();
+      $('applyStatus').textContent = r.ok ? T.rewriteApplied : (dd.error || T.errServer);
+    } catch (e) { $('applyStatus').textContent = T.errServer; }
+    finally { applyBtn.disabled = false; }
+  });
+  $('rewriteResult').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+$('rewriteBtn').addEventListener('click', async () => {
+  const resume = $('resume').value.trim();
+  const jd = $('jd').value.trim();
+  if (!resume) { $('rewriteStatus').textContent = T.errEmpty; return; }
+  if (!ME) { $('rewriteStatus').textContent = T.rewriteNeedLogin; return; }
+  const btn = $('rewriteBtn'); btn.disabled = true; btn.textContent = T.rewriting;
+  $('rewriteStatus').textContent = T.rewriting;
+  try {
+    const r = await fetch('/api/rewrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resumeText: resume, jdText: jd, lang: LANG, intensity: $('intensity').value }) });
+    const d = await r.json();
+    if (!r.ok) { $('rewriteStatus').textContent = d.error || T.errServer; return; }
+    if (d.preview) {
+      $('rewriteStatus').textContent = T.rewritePreview;
+      renderRewrite({ ...d, beforeScore: null, afterScore: null, preview: true, bullets: d.bullets, taskId: null });
+      return;
+    }
+    $('rewriteStatus').textContent = T.rewriting;
+    const result = await pollTask(d.taskId);
+    $('rewriteStatus').textContent = '';
+    renderRewrite(result);
+  } catch (e) { $('rewriteStatus').textContent = e.message || T.errServer; }
+  finally { btn.disabled = false; btn.textContent = T.rewriteBtn; }
+});
+$('coverBtn').addEventListener('click', async () => {
+  const resume = $('resume').value.trim();
+  const jd = $('jd').value.trim();
+  if (!resume) { $('rewriteStatus').textContent = T.errEmpty; return; }
+  if (!ME) { $('rewriteStatus').textContent = T.rewriteNeedLogin; return; }
+  const btn = $('coverBtn'); btn.disabled = true; btn.textContent = T.rewriting;
+  try {
+    const company = prompt(T.coverLetterCompany || 'Company');
+    if (company === null) return;
+    const r = await fetch('/api/cover-letter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resumeText: resume, jdText: jd, company: company || '', lang: LANG }) });
+    const d = await r.json();
+    if (!r.ok) { $('rewriteStatus').textContent = d.error || T.errServer; return; }
+    const result = await pollTask(d.taskId);
+    $('rewriteStatus').textContent = '';
+    $('rewriteResult').innerHTML = '<h3 style="font-size:16px">' + escH(T.coverLetterTitle) + '</h3><p style="font-size:15px;white-space:pre-wrap">' + escH(result.letter || '') + '</p>';
+    $('rewriteResult').className = 'result show';
+  } catch (e) { $('rewriteStatus').textContent = e.message || T.errServer; }
+  finally { btn.disabled = false; btn.textContent = T.coverLetterBtn; }
+});
+$('translateBtn').addEventListener('click', async () => {
+  const resume = $('resume').value.trim();
+  if (!resume) { $('rewriteStatus').textContent = T.errEmpty; return; }
+  if (!ME) { $('rewriteStatus').textContent = T.rewriteNeedLogin; return; }
+  const btn = $('translateBtn'); btn.disabled = true; btn.textContent = T.rewriting;
+  try {
+    const r = await fetch('/api/translate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: resume, lang: LANG }) });
+    const d = await r.json();
+    if (!r.ok) { $('rewriteStatus').textContent = d.error || T.errServer; return; }
+    const result = await pollTask(d.taskId);
+    $('rewriteStatus').textContent = '';
+    $('rewriteResult').innerHTML = '<h3 style="font-size:16px">' + escH(T.translateBtn) + '</h3><p style="font-size:15px;white-space:pre-wrap">' + escH(result.translated || '') + '</p>';
+    $('rewriteResult').className = 'result show';
+  } catch (e) { $('rewriteStatus').textContent = e.message || T.errServer; }
+  finally { btn.disabled = false; btn.textContent = T.translateBtn; }
+});
+refreshMe();
 </script>
 </body>
 </html>`;

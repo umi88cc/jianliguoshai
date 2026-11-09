@@ -1,1 +1,21 @@
-{"description":"简历过筛 ResumePass — 中英文双语 AI 简历优化站（JD 定向改写 + ATS 过筛评分），Cloudflare 免费层","engines":{"node":">=18"},"main":"src/index.js","name":"resume-site","private":true,"scripts":{"db:migrate":"wrangler d1 execute resume-db --remote --file=src/db/schema.sql","db:migrate:local":"wrangler d1 execute resume-db --local --file=src/db/schema.sql","deploy":"wrangler deploy","dev":"wrangler dev","test:ats":"node --test test/ats.test.js"},"type":"module","version":"0.1.0"}
+{
+  "description": "简历过筛 ResumePass — 中英文双语 AI 简历优化站（JD 定向改写 + ATS 过筛评分），Cloudflare 免费层",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "src/index.js",
+  "name": "resume-site",
+  "private": true,
+  "scripts": {
+    "db:migrate": "wrangler d1 execute resume-db --remote --file=src/db/schema.sql",
+    "db:migrate:local": "wrangler d1 execute resume-db --local --file=src/db/schema.sql",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "test:ats": "node --test test/ats.test.js",
+    "test": "node --test test/ats.test.js test/usdt.test.js test/rewrite.test.js test/ai.test.js",
+    "test:rewrite": "node --test test/rewrite.test.js",
+    "test:ai": "node --test test/ai.test.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}

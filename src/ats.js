@@ -98,7 +98,8 @@ export function parseResume(text) {
   const skillLines = [...(sectionLines['技能'] || []), ...(sectionLines['专业技能'] || []), ...(sectionLines['技能特长'] || [])];
 
   // bullet：以 • - * · ○ 数字. 开头，或经历区内的非空行
-  const bulletRe = /^([•\-*·○●■▶►]|\d+[.、）)]|（\d+）)\s*/;
+  // 注意：数字序号只认 1-2 位（1. / 12.），4 位年份开头的日期行（2018.09-2022.06）不是 bullet
+  const bulletRe = /^([•\-*·○●■▶►]|\d{1,2}[.、）)]|（\d+）)\s*/;
   const bullets = [];
   for (const line of lines) {
     if (bulletRe.test(line)) bullets.push(line.replace(bulletRe, ''));
