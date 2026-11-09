@@ -197,7 +197,11 @@ if (used >= (model.daily_limit || 50)) {
 tried.push({ model: model.model, skipped: 'daily limit reached'});
 continue;
 }
-const { key, configured} = await resolveModelKey(env, model);
+// 注意：listModels 刻意不返回 key_enc（不让加密 Key 经过后台列表接口），
+// 这里取 Key 前必须按 id 重取整行，否则 resolveModelKey 永远拿不到 key_enc，
+// 所有模型都会被跳过（key not configured），改写永远走规则兜底。
+const full = await db.prepare('SELECT * FROM ai_models WHERE id =?').bind(model.id).first().catch(() => null);
+const { key, configured} = await resolveModelKey(env, full || model);
 if (!configured ||!key) {
 tried.push({ model: model.model, skipped: 'key not configured'});
 continue;

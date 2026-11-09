@@ -91,3 +91,48 @@ test('getRules returns defaults when table is empty', async () => {
   assert.equal(rules.default_intensity, 'standard');
   assert.equal(rules.rewrite_prompt_zh, '');
 });
+
+// 回归测试：listModels 刻意不返回 key_enc（不让加密 Key 经过后台列表接口），
+// callChatModel 必须按 id 重取整行才能解出 Key；否则所有模型都会被跳过，改写永远走规则兜底。
+test('callChatModel resolves key_enc even though listModels omits it', async () => {
+  const env = { AI_KEY_ENC_SECRET: 'test-enc-secret-do-not-use-in-prod' };
+  const enc = await encryptModelKey(env, 'sk-or-v1-regression-test-key');
+  assert.equal(enc.ok, true);
+  const rowWithoutKeyEnc = {
+    id: 4, sort_order: 1, provider: 'openrouter', base_url: 'https://openrouter.ai/api/v1',
+    name: 'OpenRouter Nemotron 3 Ultra :free', model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+    key_ref: null, key_last4: 'test', key_configured: 1, is_active: 1,
+    price_text: '免费', speed_text: '—', limit_text: '', daily_limit: 50,
+    last_test_at: null, last_test_ok: 1, fail_count: 0,
+  };
+  const fullRow = { ...rowWithoutKeyEnc, key_enc: enc.enc, key_hash: await keyHash('sk-or-v1-regression-test-key') };
+  const db = {
+    prepare: (sql) => {
+      const stmt = {
+        bind: () => stmt,
+        all: async () => {
+          if (String(sql).includes('FROM ai_models ORDER BY')) return { results: [rowWithoutKeyEnc] };
+          return { results: [] };
+        },
+        first: async () => {
+          if (String(sql).includes('SELECT * FROM ai_models WHERE id')) return fullRow;
+          return null; // ai_usage: 当日 0 次
+        },
+        run: async () => ({ meta: { changes: 1 } }),
+      };
+      return stmt;
+    },
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ choices: [{ message: { content: '{"self_intro": "hi"}' } }] }),
+  });
+  try {
+    const r = await callChatModel(env, db, [{ role: 'user', content: 'hi' }], { jsonMode: false });
+    assert.equal(r.ok, true);
+    assert.equal(r.model, 'nvidia/nemotron-3-ultra-550b-a55b:free');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

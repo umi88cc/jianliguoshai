@@ -6,7 +6,11 @@ import { deductCredit, refundCredit } from './auth.js';
 import { runRewrite, runCoverLetter, runTranslate } from './rewrite.js';
 
 export const TASK_TYPES = ['rewrite', 'cover_letter', 'translate'];
-const TASK_TIMEOUT_MS = 45 * 1000; // 单次任务最长 45 秒（与 AI 调用超时一致）
+// 任务超时：一次任务可能按 failover 顺序连试多个模型，单模型调用超时 45 秒，
+// 最坏 4 个模型 × 45 秒 = 180 秒；cron 只有超过这个时间才算任务卡住。
+// 之前是 45 秒（和单次 AI 调用超时一致），导致一次正常改写还没跑完就被 cron
+// 当成“卡住”重复执行：重复调模型、重复计失败（曾因此把主模型误自动停用）。
+export const TASK_TIMEOUT_MS = 240 * 1000; // 240 秒，覆盖整条 failover 链
 
 export async function createTask(db, userId, type, payload) {
   const now = Date.now();
