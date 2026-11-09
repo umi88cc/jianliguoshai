@@ -3,6 +3,8 @@
 // 只对根路径做 302 跳转；/en/ 页面本身不跳转；爬虫不按 IP 跳。
 import { scoreResume } from './ats.js';
 import { homePage } from './pages.js';
+import { pollUsdtPayments, usdtPayInfo } from './usdt.js';
+import { getFeishuConfig } from './feishu.js';
 
 const GUEST_SCORE_PER_DAY = 1;
 
@@ -97,7 +99,8 @@ const FAVICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><re
 // R2 图片 key（扁平单段命名，/img/:key 只认单段 key，带斜杠会 404）：
 // - 咨询二维码（中文版联系方式，首页展示）：wechat-consult-qr.png / qq-consult-qr.png
 // - 商户收款码（订单页展示，第 2 周接支付时用）：wechat-merchant-pay-qr.png / alipay-pay-qr.png
-// - USDT 地址 / Telegram 机器人 Token / 飞书配置：站长尚未提供，留空位
+// - USDT 收款地址：已设为 Worker secret USDT_RECEIVE_ADDRESS（订单页从 secret 读，见 src/usdt.js）
+// - Telegram 机器人 Token / 飞书配置：见 Worker secrets TELEGRAM_BOT_TOKEN / FEISHU_*，只存服务器侧
 const QR_KEYS = {
   wechatConsult: 'wechat-consult-qr.png',
   qqConsult: 'qq-consult-qr.png',
@@ -163,6 +166,19 @@ export default {
       return json(result);
     }
 
+    if (path === '/api/pay/usdt-info' && req.method === 'GET') {
+      // USDT 收款信息（订单页展示位）：地址从 secret 读，不硬编码；
+      // 地址本身就是公开的收款地址，付款人必须看到它才能转账。
+      return json(usdtPayInfo(env));
+    }
+
+    if (path === '/api/admin/feishu-status' && req.method === 'GET') {
+      // 飞书通知配置状态（供后台「基本设置 → 通知设置」显示是否配好）：
+      // 只返回是否配好 + 脱敏标识，绝不返回 Secret 与接收方 ID 完整值。
+      // 第 2 周后台鉴权接好后，此接口改为仅站长可调。
+      return json({ ok: true, ...getFeishuConfig(env) });
+    }
+
     if (path === '/' || path === '/index.html') {
       // 根路径：按语言判断做 302 跳转（不用 301，方便改主意）；爬虫不按 IP 跳
       const lang = detectLang(req);
@@ -181,8 +197,15 @@ export default {
     return new Response('Not Found', { status: 404, headers: securityHeaders() });
   },
 
-  // 定时任务占位（第 1 周）：每分钟触发，任务逻辑第 2 周后接
+  // 定时任务：每分钟跑一次 — USDT 到账监听（TronGrid 轮询，见 src/usdt.js）。
+  // 默认手动模式：只核对并记录，不自动开通；USDT_AUTO_RELEASE 设为 '1' 后才自动放行。
   async scheduled(event, env) {
     console.log('cron tick', new Date(event.scheduledTime).toISOString());
+    try {
+      const r = await pollUsdtPayments(env);
+      console.log('usdt poll result', JSON.stringify(r));
+    } catch (e) {
+      console.error('usdt poll error', e);
+    }
   },
 };
