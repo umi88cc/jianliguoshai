@@ -1,0 +1,37 @@
+# 简历过筛 ResumePass — Cloudflare Workers 配置
+# 只用免费层，主号 228522198@qq.com
+name = "resume-site"
+main = "src/index.js"
+compatibility_date = "2026-11-09"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 主库（免费层：每个库最大 500MB，账号总计 5GB，最多 10 个库）
+[[d1_databases]]
+binding = "DB"
+database_name = "resume-db"
+database_id = "e9d5f1b1-079b-4eee-a1ef-87e9fa38e062"
+# 建表命令：python3 bin/d1_exec.py <uuid> src/db/schema.sql
+#   或 npx wrangler d1 execute resume-db --remote --file=src/db/schema.sql
+
+# KV：只做热点缓存 / 限流计数辅助，不存余额积分等关键数据
+# 免费层：每天 10 万次读、1000 次写/删、1GB 存储
+[[kv_namespaces]]
+binding = "KV"
+id = "b81cf7cd816f42b2b1d856bcc7369ba3"
+
+# R2：用户上传的简历原文件（PDF/Word），10GB 免费
+# 正文放 D1 便于检索；原文件放 R2；前台文件走 Worker 鉴权后放行，不暴露 R2 直链
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "resume-files"
+
+# 定时任务：每分钟跑任务队列（TG 轮询、游客清理、到期提醒、额度告警）
+# 第 1 周先占位，任务逻辑第 2 周后接
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+SITE_NAME = "简历过筛"
+SITE_NAME_EN = "ResumePass"
+# SITE_URL 不写死：Worker 从请求 host 动态取，robots/sitemap/hreflang 都用请求 host
+# 自定义域名绑定后再填这里
