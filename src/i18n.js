@@ -101,6 +101,14 @@ export const I18N = {
     coverLetterCompany: '目标公司（可选）',
     translateBtn: '中英互译',
     taskFailed: '任务失败，请稍后重试',
+    // ---- 第 4 周：导出 ----
+    exportTitle: '导出简历',
+    exportPdf: '导出 PDF',
+    exportWord: '导出 Word',
+    exportTemplate: '模板',
+    exporting: '正在导出…',
+    exportHint: '每次导出扣 1 次导出额度（包月/终身不限）。PDF 会打开打印页，在打印对话框里选“另存为 PDF”。',
+    exportBuy: '去购买套餐',
   },
   en: {
     lang: 'en',
@@ -197,5 +205,13 @@ export const I18N = {
     coverLetterCompany: 'Target company (optional)',
     translateBtn: 'Translate EN ↔ ZH',
     taskFailed: 'Task failed. Please try again',
+    // ---- Week 4: export ----
+    exportTitle: 'Export resume',
+    exportPdf: 'Export PDF',
+    exportWord: 'Export Word',
+    exportTemplate: 'Template',
+    exporting: 'Exporting…',
+    exportHint: 'Each export costs 1 export credit (monthly / lifetime unlimited). PDF opens a print page — choose “Save as PDF” in the print dialog.',
+    exportBuy: 'Buy a plan',
   },
 };

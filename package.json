@@ -12,7 +12,7 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "test:ats": "node --test test/ats.test.js",
-    "test": "node --test test/ats.test.js test/usdt.test.js test/rewrite.test.js test/ai.test.js test/orders.test.js test/tasks.test.js",
+    "test": "node --test test/ats.test.js test/usdt.test.js test/rewrite.test.js test/ai.test.js test/orders.test.js test/tasks.test.js test/export.test.js",
     "test:rewrite": "node --test test/rewrite.test.js",
     "test:ai": "node --test test/ai.test.js"
   },

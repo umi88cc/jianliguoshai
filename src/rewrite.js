@@ -38,28 +38,45 @@ for (const m of t.matchAll(/(\d{4})\s*[-–—~至]\s*(\d{4})/g)) {
 dates.add(m[1]);
 dates.add(m[2]);
 }
-// 数字：归一化（去逗号/空格，％→%，万/元/人等单位保留在数值串里比对时去掉单位只比数字本身）
+// 数字：归一化（去逗号/空格；单位按量级换算成数值再比对——
+// 2 万 = 20000、20K = 20000、1.5 亿 = 150000000；
+// 否则互译把“2 万”翻成“20,000”会被误判为新增数字而拦截。
 // 日期的一部分不算数字：YYYY.MM 整体、YYYY年MM月 / YYYY-MM 的年和月、
 // 裸年份 YYYY年、年份区间 YYYY-YYYY 的两端——这些都在 dates 里比对，
 // 否则简历写 2023.07、信里写 2023年7月会被拆成 2023 和 7 双双判违规。
+const UNIT_MULT = {
+  万: 10000,
+  亿: 100000000,
+  千: 1000,
+  k: 1000,
+  K: 1000,
+  w: 10000,
+  M: 1000000,
+};
 const numbers = new Set();
-for (const m of t.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(?:%|％|万|元|人|个|倍|k|K|w|亿)?/g)) {
-const n = m[1].replace(/,/g, '');
-if (!n) continue;
+for (const m of t.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(%|％|万|元|人|个|倍|千|k|K|w|M|亿)?/g)) {
+const raw = m[1].replace(/,/g, '');
+if (!raw) continue;
 const start = m.index;
 const end = start + m[1].length;
 const before = t.slice(Math.max(0, start - 8), start);
 const after = t.slice(end, end + 5).trimStart();
-if (/^\d{4}\.\d{1,2}$/.test(n)) {
-const mo = Number(n.split('.')[1]);
+if (/^\d{4}\.\d{1,2}$/.test(raw)) {
+const mo = Number(raw.split('.')[1]);
 if (mo >= 1 && mo <= 12) continue; // YYYY.MM 日期整体
 }
-if (/^(?:19|20)\d{2}$/.test(n)) {
+if (/^(?:19|20)\d{2}$/.test(raw)) {
 // 年份：后面跟 年 / 分隔符+月份数字，或前面是 年份+分隔符（区间后段）
 if (/^年/.test(after) || /^[./–—~至-]+\s*\d/.test(after)) continue;
 if (/(?:19|20)\d{2}\s*[./年–—~至-]+\s*$/.test(before)) continue;
 }
-if (/^\d{1,2}$/.test(n) && /(?:19|20)\d{2}\s*[./年-]\s*$/.test(before)) continue; // 月份
+if (/^\d{1,2}$/.test(raw) && /(?:19|20)\d{2}\s*[./年-]\s*$/.test(before)) continue; // 月份
+const mult = UNIT_MULT[m[2] || ''];
+let n = raw;
+if (mult) {
+const v = Number(raw) * mult;
+n = String(v);
+}
 numbers.add(n);
 }
 // 公司：含组织后缀的词 + 经历区“日期段 + 公司名”表头的公司名（如“2022.07-至今 字节跳动 高级产品经理”）

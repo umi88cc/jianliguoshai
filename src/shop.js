@@ -97,12 +97,40 @@ async function api(path, method, body) {
   if (!r.ok) throw new Error(data.error || ('请求失败 ' + r.status));
   return data;
 }
+// 导出简历：先 POST /api/export 扣 1 次 export 额度，拿到 token 后打开导出页
+// （PDF 在新标签页打开打印页，Word 直接下载 .doc）。按钮带加载反馈、防重复点。
+async function exportResume(resumeId, format, templateId, btn, statusEl) {
+  if (!btn || btn.disabled) return;
+  const busyText = btn.dataset.busy || '正在导出…';
+  setBtn(btn, true, busyText);
+  if (statusEl) statusEl.textContent = busyText;
+  try {
+    const d = await api('/api/export', 'POST', { resumeId, format, templateId });
+    if (statusEl) statusEl.textContent = '';
+    if (format === 'pdf') {
+      window.open(d.url, '_blank');
+    } else {
+      const a = document.createElement('a');
+      a.href = d.url;
+      a.click();
+    }
+    return d;
+  } catch (e) {
+    if (statusEl) statusEl.textContent = e.message || '导出失败，请稍后重试';
+    throw e;
+  } finally {
+    setBtn(btn, false);
+  }
+}
 </script>
 <header class="site"><nav class="nav" aria-label="main">
 <a class="brand" href="${home}">${lang === "zh" ? "简历过筛" : "ResumePass"}<small>${lang === "zh" ? "ATS 评分" : "ATS Score"}</small></a>
 <a class="item" href="${home}">${esc(t.navHome)}</a>
+<a class="item" href="${home}#tool">${esc(t.navOptimize)}</a>
 <a class="item" href="${prefix}/templates">${esc(t.navTemplates)}</a>
+<a class="item" href="${prefix}/resumes">${esc(t.navMine)}</a>
 <a class="item" href="${prefix}/me">${esc(t.navMember)}</a>
+<a class="item" href="${home}#faq">${esc(t.navFaq)}</a>
 <a class="lang" href="${other === "zh" ? "/" : "/en/"}">${otherLabel}</a>
 </nav></header>
 <main class="wrap">${body}</main>
@@ -462,4 +490,135 @@ document.querySelectorAll('[data-apply]').forEach((b) => b.addEventListener('cli
 }));
 </script>`;
   return shell(lang, base, t.navTemplates, body);
+}
+
+// ================= 我的简历（第 4 周：历史版本 + 一键排版 + 导出） =================
+// 改写后“采纳选中”保存的版本都在这里：一岗一版，按时间倒序；每版可选 6 套模板
+// 一键排版后导出 PDF（打印页另存为 PDF）或 Word（.doc 下载），每次导出扣 1 次
+// export 额度（包月/终身不限）。删除即真删（简历 + 改写存档 + 评分记录）。
+export function resumesPage(lang, base) {
+  const t = I18N[lang];
+  const body = `
+<section class="card" style="margin-top:24px">
+<h2>${esc(t.navMine)}</h2>
+<p class="hint">${lang === "en" ? "Every version you saved by applying a rewrite, newest first — one version per job. Pick a template to re-typeset, then export PDF or Word." : "改写后“采纳选中”保存的版本都在这里，一岗一版，最新在前。选一套模板一键排版，再导出 PDF 或 Word。"}</p>
+<div id="loginBox">
+<p class="hint">${lang === "en" ? "Log in with an email code to see your resumes." : "请先用邮箱验证码登录。"}</p>
+<div class="tool-actions">
+<input id="loginEmail" type="email" placeholder="${esc(t.emailPh)}" style="flex:1;min-width:200px;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:16px" autocomplete="email">
+<button class="btn ghost" id="sendCodeBtn" type="button">${esc(t.sendCodeBtn)}</button>
+</div>
+<div class="tool-actions">
+<input id="loginCode" type="text" inputmode="numeric" maxlength="6" placeholder="${esc(t.codePh)}" style="flex:1;min-width:140px;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:16px">
+<button class="btn" id="loginBtn" type="button">${esc(t.loginBtn)}</button>
+</div>
+<p class="status" id="loginStatus"></p>
+</div>
+<div id="listBox" style="display:none">
+<p class="hint" id="creditLine"></p>
+<div id="resumeList"></div>
+<p class="note" style="margin-top:16px">${lang === "en" ? "Each export costs 1 export credit (single plan includes 1 export; monthly / lifetime exports are unlimited). A PDF export opens a print page — choose “Save as PDF” in the print dialog." : "每次导出扣 1 次导出额度（单次套餐含 1 次导出；包月/终身导出不限）。导出 PDF 会打开打印页，在打印对话框里选“另存为 PDF”即可下载。"}</p>
+</div>
+</section>
+<script>
+const LANG = ${JSON.stringify(lang)};
+const TPL_ZH = ${JSON.stringify(templatesForLang("zh").map((x) => ({ id: x.id, name: x.name })))};
+const TPL_EN = ${JSON.stringify(templatesForLang("en").map((x) => ({ id: x.id, name: x.name_en })))};
+function tplOptions(resumeLang) {
+  const list = resumeLang === 'en' ? TPL_EN : TPL_ZH;
+  return list.map((x) => '<option value="' + x.id + '">' + escH(x.name) + '</option>').join('');
+}
+function fmtDate(ts) { if (!ts) return '—'; return new Date(ts).toISOString().slice(0, 10); }
+function fmtCredits(b) { return b === -1 ? (LANG === 'en' ? 'Unlimited' : '不限') : String(b); }
+async function refreshMe() {
+  try {
+    const d = await api('/api/auth/me');
+    if (!d.user) { $('loginBox').style.display = ''; $('listBox').style.display = 'none'; return; }
+    $('loginBox').style.display = 'none';
+    $('listBox').style.display = '';
+    loadList();
+  } catch (e) { $('loginBox').style.display = ''; $('listBox').style.display = 'none'; }
+}
+$('sendCodeBtn').addEventListener('click', async () => {
+  const email = $('loginEmail').value.trim();
+  if (!email) { $('loginStatus').textContent = LANG === 'en' ? 'Enter your email' : '请先填邮箱'; return; }
+  const btn = $('sendCodeBtn'); setBtn(btn, true, LANG === 'en' ? 'Sending…' : '发送中…');
+  try {
+    const d = await api('/api/auth/send-code', 'POST', { email });
+    $('loginStatus').textContent = d.devMode ? ('开发模式验证码：' + d.code) : (LANG === 'en' ? 'Code sent to your email' : '验证码已发到邮箱，请查收');
+  } catch (e) { $('loginStatus').textContent = e.message; }
+  finally { setBtn(btn, false); }
+});
+$('loginBtn').addEventListener('click', async () => {
+  const email = $('loginEmail').value.trim();
+  const code = $('loginCode').value.trim();
+  if (!email || !code) { $('loginStatus').textContent = LANG === 'en' ? 'Enter email and code' : '请填邮箱和验证码'; return; }
+  const btn = $('loginBtn'); setBtn(btn, true, LANG === 'en' ? 'Logging in…' : '登录中…');
+  try { await api('/api/auth/verify-code', 'POST', { email, code }); await refreshMe(); }
+  catch (e) { $('loginStatus').textContent = e.message; }
+  finally { setBtn(btn, false); }
+});
+async function loadList() {
+  try {
+    const s = await api('/api/me/summary');
+    const ex = s.credits ? s.credits.export : 0;
+    $('creditLine').innerHTML = (LANG === 'en' ? 'Export credits left: <b>' + escH(fmtCredits(ex)) + '</b>' : '导出剩余额度：<b>' + escH(fmtCredits(ex)) + '</b>')
+      + (ex === 0 ? ' · <a href="' + (LANG === 'en' ? '/en/orders/new' : '/orders/new') + '">' + (LANG === 'en' ? 'Buy a plan' : '去购买套餐') + '</a>' : '');
+    const d = await api('/api/resumes');
+    const list = d.resumes || [];
+    if (!list.length) {
+      $('resumeList').innerHTML = '<p class="note">' + (LANG === 'en' ? 'No saved versions yet. Rewrite a resume on the home page and click “Apply selected & save as a new version”.' : '还没有保存的版本。去首页改写简历，点“采纳选中，保存为新版本”后就会出现在这里。') + '</p>';
+      return;
+    }
+    $('resumeList').innerHTML = list.map((r) => '<div class="order-row" data-id="' + r.id + '">'
+      + '<div class="top"><span><b>' + escH(r.title) + '</b> · ' + escH(r.lang === 'en' ? 'EN' : '中文') + '</span><span style="color:var(--muted);font-size:13px">' + escH(fmtDate(r.created_at)) + '</span></div>'
+      + '<div class="tool-actions"><label style="margin:0;font-size:14px">' + (LANG === 'en' ? 'Template: ' : '模板：') + '<select data-tpl="' + r.id + '" style="padding:8px;border:1px solid var(--line);border-radius:8px;font-size:15px;background:#fff">' + tplOptions(r.lang) + '</select></label>'
+      + '<button class="btn" data-exp-pdf="' + r.id + '" data-busy="' + (LANG === 'en' ? 'Exporting…' : '正在导出…') + '" type="button">' + (LANG === 'en' ? 'Export PDF' : '导出 PDF') + '</button>'
+      + '<button class="btn ghost" data-exp-doc="' + r.id + '" data-busy="' + (LANG === 'en' ? 'Exporting…' : '正在导出…') + '" type="button">' + (LANG === 'en' ? 'Export Word' : '导出 Word') + '</button>'
+      + '<button class="btn ghost" data-preview="' + r.id + '" type="button">' + (LANG === 'en' ? 'Preview' : '预览') + '</button>'
+      + '<button class="btn ghost" data-del="' + r.id + '" type="button" style="color:var(--red)">' + (LANG === 'en' ? 'Delete' : '删除') + '</button></div>'
+      + '<p class="status" data-status="' + r.id + '"></p>'
+      + '<pre data-preview-box="' + r.id + '" style="display:none;white-space:pre-wrap;font-size:14px;background:#F7F8F9;border:1px solid var(--line);border-radius:10px;padding:14px;margin-top:12px;max-height:320px;overflow:auto"></pre>'
+      + '</div>').join('');
+    document.querySelectorAll('[data-exp-pdf]').forEach((b) => b.addEventListener('click', async () => {
+      const id = Number(b.dataset.expPdf);
+      const tpl = (document.querySelector('[data-tpl="' + id + '"]') || {}).value || '';
+      const st = document.querySelector('[data-status="' + id + '"]');
+      try { await exportResume(id, 'pdf', tpl, b, st); loadList(); }
+      catch (e) {}
+    }));
+    document.querySelectorAll('[data-exp-doc]').forEach((b) => b.addEventListener('click', async () => {
+      const id = Number(b.dataset.expDoc);
+      const tpl = (document.querySelector('[data-tpl="' + id + '"]') || {}).value || '';
+      const st = document.querySelector('[data-status="' + id + '"]');
+      try { await exportResume(id, 'doc', tpl, b, st); loadList(); }
+      catch (e) {}
+    }));
+    document.querySelectorAll('[data-preview]').forEach((b) => b.addEventListener('click', async () => {
+      const id = Number(b.dataset.preview);
+      const box = document.querySelector('[data-preview-box="' + id + '"]');
+      if (!box) return;
+      if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+      setBtn(b, true, LANG === 'en' ? 'Loading…' : '加载中…');
+      try {
+        const d = await api('/api/resumes/' + id);
+        box.textContent = d.resume.raw_text || '';
+        box.style.display = '';
+      } catch (e) { box.textContent = e.message; box.style.display = ''; }
+      finally { setBtn(b, false); }
+    }));
+    document.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+      const id = Number(b.dataset.del);
+      if (!confirm(LANG === 'en' ? 'Delete this version? This cannot be undone.' : '确定删除这个版本吗？删除后无法恢复。')) return;
+      setBtn(b, true, LANG === 'en' ? 'Deleting…' : '删除中…');
+      try { await api('/api/resumes/' + id, 'DELETE'); loadList(); }
+      catch (e) { setBtn(b, false); alert(e.message); }
+    }));
+  } catch (e) {
+    $('resumeList').innerHTML = '<p class="note">' + escH(e.message) + '</p>';
+  }
+}
+refreshMe();
+</script>`;
+  return shell(lang, base, t.navMine, body);
 }

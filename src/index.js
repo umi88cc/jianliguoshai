@@ -14,6 +14,7 @@ import {
   sessionCookie,
   clearSessionCookie,
   getCredits,
+  deductCredit,
   grantCredits,
 } from "./auth.js";
 import {
@@ -37,8 +38,20 @@ import {
   publicTask,
 } from "./tasks.js";
 import { adminPage } from "./admin.js";
-import { orderPage, memberPage, templatesPage } from "./shop.js";
+import { orderPage, memberPage, templatesPage, resumesPage } from "./shop.js";
 import { adminOrdersPage } from "./adminOrders.js";
+import {
+  parseResumeText,
+  orderSectionsForTemplate,
+  resumeBodyHtml,
+  fileBaseName,
+  printPageHtml,
+  docFileHtml,
+  newExportToken,
+  isTokenValid,
+  EXPORT_TOKEN_TTL_MS,
+} from "./export.js";
+import { getTemplate, templatesForLang } from "./templates.js";
 import {
   createOrder,
   markPaid,
@@ -164,11 +177,19 @@ function sitemapIndex(base) {
 }
 
 function sitemapLang(base, lang) {
-  const urls = lang === "zh" ? [`${base}/`] : [`${base}/en/`];
+  const urls =
+    lang === "zh"
+      ? [`${base}/`, `${base}/templates`]
+      : [`${base}/en/`, `${base}/en/templates`];
   const lastmod = dayString();
+  const alt = (u) =>
+    u === `${base}/` || u === `${base}/en/`
+      ? `<xhtml:link rel="alternate" hreflang="zh-CN" href="${base}/"/><xhtml:link rel="alternate" hreflang="en" href="${base}/en/"/><xhtml:link rel="alternate" hreflang="x-default" href="${base}/"/>`
+      : `<xhtml:link rel="alternate" hreflang="zh-CN" href="${base}/templates"/><xhtml:link rel="alternate" hreflang="en" href="${base}/en/templates"/><xhtml:link rel="alternate" hreflang="x-default" href="${base}/templates"/>`;
+  const priority = (u) => (u.endsWith("/templates") ? "0.8" : "1.0");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
-${urls.map((u) => `  <url><loc>${u}</loc><lastmod>${lastmod}</lastmod><changefreq>weekly</changefreq><priority>1.0</priority><xhtml:link rel="alternate" hreflang="zh-CN" href="${base}/"/><xhtml:link rel="alternate" hreflang="en" href="${base}/en/"/><xhtml:link rel="alternate" hreflang="x-default" href="${base}/"/></url>`).join("\n")}
+${urls.map((u) => `  <url><loc>${u}</loc><lastmod>${lastmod}</lastmod><changefreq>weekly</changefreq><priority>${priority(u)}</priority>${alt(u)}</url>`).join("\n")}
 </urlset>`;
 }
 
@@ -427,6 +448,179 @@ export default {
         )
         .run();
       return json({ ok: true, resumeId: r.meta.last_row_id, text });
+    }
+
+    // ---------- 我的简历：历史版本列表 / 查看 / 删除（第 4 周） ----------
+    if (path === "/api/resumes" && req.method === "GET") {
+      const user = await getSessionUser(env.DB, req);
+      if (!user) return json({ error: "请先登录" }, 401);
+      const rows = await env.DB.prepare(
+        "SELECT id, title, lang, parent_id, created_at FROM resumes WHERE user_id = ? ORDER BY id DESC LIMIT 50",
+      )
+        .bind(user.id)
+        .all()
+        .catch(() => ({ results: [] }));
+      return json({ ok: true, resumes: rows.results || [] });
+    }
+    if (path.startsWith("/api/resumes/") && req.method === "GET") {
+      const user = await getSessionUser(env.DB, req);
+      if (!user) return json({ error: "请先登录" }, 401);
+      const id = Number(path.slice("/api/resumes/".length));
+      if (!Number.isFinite(id)) return json({ error: "简历不存在" }, 404);
+      const row = await env.DB.prepare("SELECT * FROM resumes WHERE id = ?")
+        .bind(id)
+        .first()
+        .catch(() => null);
+      if (!row || row.user_id !== user.id)
+        return json({ error: "简历不存在" }, 404);
+      return json({
+        ok: true,
+        resume: {
+          id: row.id,
+          title: row.title,
+          lang: row.lang,
+          parent_id: row.parent_id,
+          raw_text: row.raw_text,
+          created_at: row.created_at,
+        },
+      });
+    }
+    if (path.startsWith("/api/resumes/") && req.method === "DELETE") {
+      const user = await getSessionUser(env.DB, req);
+      if (!user) return json({ error: "请先登录" }, 401);
+      const id = Number(path.slice("/api/resumes/".length));
+      if (!Number.isFinite(id)) return json({ error: "简历不存在" }, 404);
+      const row = await env.DB.prepare("SELECT * FROM resumes WHERE id = ?")
+        .bind(id)
+        .first()
+        .catch(() => null);
+      if (!row || row.user_id !== user.id)
+        return json({ error: "简历不存在" }, 404);
+      // 删除即真删：简历 + 它的改写存档 + 评分记录一起删
+      await env.DB.prepare("DELETE FROM resumes WHERE id = ?")
+        .bind(id)
+        .run();
+      await env.DB.prepare("DELETE FROM rewrites WHERE resume_id = ?")
+        .bind(id)
+        .run();
+      await env.DB.prepare("DELETE FROM analyses WHERE resume_id = ?")
+        .bind(id)
+        .run();
+      return json({ ok: true });
+    }
+
+    // ---------- 导出：扣 1 次 export 额度 → 发 30 分钟 token（第 4 周，规划 §9） ----------
+    if (path === "/api/export" && req.method === "POST") {
+      const user = await getSessionUser(env.DB, req);
+      if (!user) return json({ error: "请先登录" }, 401);
+      let body;
+      try {
+        body = await req.json();
+      } catch {
+        return json({ error: "请求体不是合法 JSON" }, 400);
+      }
+      const resumeId = Number(body.resumeId);
+      const format = body.format === "doc" ? "doc" : "pdf";
+      if (!Number.isFinite(resumeId))
+        return json({ error: "简历不存在" }, 404);
+      const row = await env.DB.prepare("SELECT * FROM resumes WHERE id = ?")
+        .bind(resumeId)
+        .first()
+        .catch(() => null);
+      if (!row || row.user_id !== user.id)
+        return json({ error: "简历不存在" }, 404);
+      const templateId = String(body.templateId || "");
+      const template = templateId ? getTemplate(templateId) : null;
+      if (templateId && !template)
+        return json({ error: "模板不存在" }, 400);
+      // 扣额度：-1（包月/终身）不限不扣；余额不足 → 402，提示购买
+      const ok = await deductCredit(env.DB, user.id, "export", 1);
+      if (!ok)
+        return json(
+          {
+            error: "导出次数已用完，请购买套餐（单次 9.9 元起，含 1 次导出；包月/终身导出不限）",
+            code: "no_export_credits",
+          },
+          402,
+        );
+      const token = newExportToken();
+      const now = Date.now();
+      await env.DB.prepare(
+        "INSERT INTO export_tokens (token, user_id, resume_id, format, template_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+        .bind(
+          token,
+          user.id,
+          resumeId,
+          format,
+          template ? template.id : null,
+          now,
+          now + EXPORT_TOKEN_TTL_MS,
+        )
+        .run();
+      return json({ ok: true, token, url: `/export/${token}` });
+    }
+
+    // ---------- 导出渲染：PDF 打印页 / Word .doc 下载（token 鉴权，30 分钟有效） ----------
+    if (path.startsWith("/export/") && req.method === "GET") {
+      const token = path.slice("/export/".length);
+      if (!token || token.includes("/") || token.length !== 32) {
+        return new Response("Not Found", {
+          status: 404,
+          headers: securityHeaders(),
+        });
+      }
+      const tok = await env.DB.prepare(
+        "SELECT * FROM export_tokens WHERE token = ?",
+      )
+        .bind(token)
+        .first()
+        .catch(() => null);
+      if (!isTokenValid(tok)) {
+        return new Response(
+          "导出链接已过期（30 分钟有效），请回到“我的简历”重新导出。",
+          { status: 404, headers: securityHeaders() },
+        );
+      }
+      const resume = await env.DB.prepare(
+        "SELECT * FROM resumes WHERE id = ? AND user_id = ?",
+      )
+        .bind(tok.resume_id, tok.user_id)
+        .first()
+        .catch(() => null);
+      if (!resume) {
+        return new Response("Not Found", {
+          status: 404,
+          headers: securityHeaders(),
+        });
+      }
+      const lang = resume.lang === "en" ? "en" : "zh";
+      const template = tok.template_id
+        ? getTemplate(tok.template_id)
+        : getTemplate(lang === "en" ? "en-classic" : "zh-classic");
+      const parsed = parseResumeText(resume.raw_text, lang);
+      const bodyHtml = resumeBodyHtml(parsed, template, lang);
+      const fileBase = fileBaseName(parsed, lang);
+      if (tok.format === "doc") {
+        const doc = docFileHtml({ title: resume.title, bodyHtml });
+        const asciiName = "resume.doc";
+        return new Response(doc, {
+          headers: {
+            "Content-Type": "application/msword; charset=utf-8",
+            "Content-Disposition": `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(fileBase + ".doc")}`,
+            ...securityHeaders(),
+          },
+        });
+      }
+      return new Response(
+        printPageHtml({ title: resume.title, fileBase, bodyHtml, lang }),
+        {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            ...securityHeaders(),
+          },
+        },
+      );
     }
 
     // ---------- 后台：AI 模型配置 ----------
@@ -752,6 +946,10 @@ export default {
     if (path === "/templates" || path === "/en/templates") {
       const lang = path.startsWith("/en/") ? "en" : "zh";
       return html(templatesPage(lang, baseUrl(req)));
+    }
+    if (path === "/resumes" || path === "/en/resumes") {
+      const lang = path.startsWith("/en/") ? "en" : "zh";
+      return html(resumesPage(lang, baseUrl(req)));
     }
     if (path === "/admin/orders" && req.method === "GET") {
       return html(adminOrdersPage());

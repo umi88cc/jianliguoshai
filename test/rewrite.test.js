@@ -44,7 +44,7 @@ test('fabrication check catches an invented number', () => {
   const r = checkFabrication(RESUME, '主导项目，DAU 从 100 万提升到 900 万，增长 800%');
   console.log('number violations:', r.violations);
   assert.equal(r.ok, false);
-  assert.ok(r.violations.some((v) => v.type === 'number' && v.value === '900'));
+  assert.ok(r.violations.some((v) => v.type === 'number' && v.value === '9000000'));
 });
 
 test('fabrication check catches an invented company', () => {
@@ -121,11 +121,35 @@ test('runRewrite without any AI model falls back to rules and scores both sides'
 
 test('extractFacts finds numbers, companies and dates', () => {
   const f = extractFacts(RESUME);
-  assert.ok(f.numbers.has('100'), 'expected number 100');
-  assert.ok(f.numbers.has('300'), 'expected number 300');
+  // “100 万”归一化成 1000000（第 4 周：单位换算，否则互译“2 万”→“20,000”会被误判编造）
+  assert.ok(f.numbers.has('1000000'), 'expected number 1000000 (100 万)');
+  assert.ok(f.numbers.has('3000000'), 'expected number 3000000 (300 万)');
+  assert.ok(f.numbers.has('5000000'), 'expected number 5000000 (500 万用户)');
   assert.ok([...f.companies].some((c) => c.includes('字节跳动')), 'expected company 字节跳动');
   assert.ok(f.dates.has('201809'), 'expected date 2018.09');
   assert.ok(f.dates.has('202207'), 'expected date 2022.07');
+});
+
+test('extractFacts: 单位归一化（万/千/亿/K/M）', () => {
+  const f = extractFacts('日活从 2 万提升至 5 万，覆盖 3 千人，营收 1.5 亿');
+  assert.ok(f.numbers.has('20000'), 'expected 20000 (2 万)');
+  assert.ok(f.numbers.has('50000'), 'expected 50000 (5 万)');
+  assert.ok(f.numbers.has('3000'), 'expected 3000 (3 千)');
+  assert.ok(f.numbers.has('150000000'), 'expected 150000000 (1.5 亿)');
+  assert.equal(f.numbers.has('2'), false);
+  assert.equal(f.numbers.has('5'), false);
+  const g = extractFacts('DAU from 20,000 to 50,000, 20K users, 1.5M revenue');
+  assert.ok(g.numbers.has('20000'), 'expected 20000 (20,000 / 20K)');
+  assert.ok(g.numbers.has('50000'), 'expected 50000 (50,000)');
+  assert.ok(g.numbers.has('1500000'), 'expected 1500000 (1.5M)');
+});
+
+test('fabrication check: “2 万”与“20,000”是同一数字，不判编造；真编造仍拦截', () => {
+  const ok = checkFabrication('主导增长，日活从 2 万提升至 5 万', 'Led growth, DAU from 20,000 to 50,000');
+  assert.equal(ok.ok, true, JSON.stringify(ok.violations));
+  const bad = checkFabrication('主导增长，日活从 2 万提升至 5 万', 'Led growth, DAU from 20,000 to 90,000');
+  assert.equal(bad.ok, false);
+  assert.ok(bad.violations.some((v) => v.value === '90000'));
 });
 
 // ---------- 求职信防编造检查（第 2 周 bug 修复回归） ----------
@@ -140,7 +164,7 @@ test('extractFacts: 日期不拆成数字（2023.07 不是数字 2023.07/2023/7�
   assert.equal(f.numbers.has('7'), false);
   assert.equal(f.numbers.has('2022'), false);
   assert.equal(f.numbers.has('2025'), false);
-  assert.ok(f.numbers.has('500'), 'expected number 500');
+  assert.ok(f.numbers.has('5000000'), 'expected number 5000000 (500 万)');
   assert.ok(f.dates.has('202307'), 'expected date 202307');
   assert.ok(f.dates.has('2023'), 'expected year 2023');
   assert.ok(f.dates.has('2022'), 'expected year 2022');
@@ -177,7 +201,7 @@ test('cover letter: 完整求职信通过（贵公司 + JD 数字 + 换写日期
 test('cover letter: 真编造仍拦截（数字/公司/日期）', () => {
   const num = checkCoverLetterFabrication(RESUME, JD, COVER_COMPANY, '主导项目推动 DAU 从 100 万提升到 900 万。');
   assert.equal(num.ok, false);
-  assert.ok(num.violations.some((v) => v.type === 'number' && v.value === '900'));
+  assert.ok(num.violations.some((v) => v.type === 'number' && v.value === '9000000'));
   const co = checkCoverLetterFabrication(RESUME, JD, COVER_COMPANY, '我曾在腾讯科技有限公司担任产品经理。');
   assert.equal(co.ok, false);
   assert.ok(co.violations.some((v) => v.type === 'company'));
@@ -245,7 +269,7 @@ test('runCoverLetter: 带编造数字的信照样拦截（stub 模型）', async
     });
     assert.equal(r.ok, false);
     assert.match(r.error, /防编造检查/);
-    assert.ok((r.violations || []).some((v) => v.type === 'number' && v.value === '900'));
+    assert.ok((r.violations || []).some((v) => v.type === 'number' && v.value === '9000000'));
   } finally {
     globalThis.fetch = origFetch;
   }

@@ -2,6 +2,7 @@
 // 设计规范 §1：主色钢蓝 #1668B4、近白底 #F7F8F9、圆角 10px、内容最大宽 1060px；
 // 移动优先：按钮 ≥44px、输入框 ≥16px（不触发手机自动放大）；输入框与上方标题左对齐同宽。
 import { I18N } from "./i18n.js";
+import { templatesForLang } from "./templates.js";
 
 export const CSS = `
 *{box-sizing:border-box;margin:0;padding:0}
@@ -81,6 +82,7 @@ footer.site{margin:48px 0 32px;text-align:center;color:var(--muted);font-size:13
   .hero{padding:32px 0 4px}
   .hero h1{font-size:24px}
   .hero p.sub{font-size:15px}
+  .nav{flex-wrap:wrap;height:auto;padding:8px 16px}
   .nav a.item{padding:8px 6px;font-size:14px}
   .brand small{display:none}
   .steps{grid-template-columns:1fr}
@@ -173,7 +175,9 @@ export function homePage(lang, base) {
 <a class="item active" href="${lang === "zh" ? "/" : "/en/"}">${esc(t.navHome)}</a>
 <a class="item" href="#tool">${esc(t.navOptimize)}</a>
 <a class="item" href="${lang === "zh" ? "/templates" : "/en/templates"}">${esc(t.navTemplates)}</a>
+<a class="item" href="${lang === "zh" ? "/resumes" : "/en/resumes"}">${esc(t.navMine)}</a>
 <a class="item" href="${lang === "zh" ? "/me" : "/en/me"}">${esc(t.navMember)}</a>
+<a class="item" href="#faq">${esc(t.navFaq)}</a>
 <a class="item" href="#faq">${esc(t.navFaq)}</a>
 <a class="lang" href="${other === "zh" ? "/" : "/en/"}">${otherLabel}</a>
 </nav></header>
@@ -262,6 +266,7 @@ ${contactHtml}
 <script>
 const T = ${JSON.stringify(t)};
 const LANG = ${JSON.stringify(lang)};
+const TPLS = ${JSON.stringify(templatesForLang(lang).map((x) => ({ id: x.id, name: lang === "zh" ? x.name : x.name_en })))};
 const $ = (id) => document.getElementById(id);
 const escH = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 $('fileInput').addEventListener('change', (e) => {
@@ -523,7 +528,14 @@ function renderRewrite(d) {
     h += '<p class="note">' + d.score_tips.map(escH).join('<br>') + '</p>';
   }
   if (!d.preview) {
-    h += '<div class="tool-actions"><button class="btn" id="applyBtn" type="button">' + escH(T.rewriteApply) + '</button></div><p class="status" id="applyStatus"></p>';
+    h += '<div class="tool-actions"><button class="btn" id="applyBtn" type="button">' + escH(T.rewriteApply) + '</button></div><p class="status" id="applyStatus"></p>'
+      + '<div id="exportBox" style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:16px">'
+      + '<h3 style="font-size:16px">' + escH(T.exportTitle) + '</h3>'
+      + '<p class="hint">' + escH(T.exportHint) + '</p>'
+      + '<div class="tool-actions"><label style="margin:0;font-size:15px">' + escH(T.exportTemplate) + ' <select id="exportTpl" style="padding:10px;border:1px solid var(--line);border-radius:10px;font-size:16px;background:#fff">' + TPLS.map((x) => '<option value="' + x.id + '">' + escH(x.name) + '</option>').join('') + '</select></label>'
+      + '<button class="btn" id="exportPdfBtn" type="button">' + escH(T.exportPdf) + '</button>'
+      + '<button class="btn ghost" id="exportDocBtn" type="button">' + escH(T.exportWord) + '</button></div>'
+      + '<p class="status" id="exportStatus"></p></div>';
   } else {
     h += '<p class="note">' + escH(T.rewriteBuyNote) + '</p>';
   }
@@ -536,11 +548,55 @@ function renderRewrite(d) {
     try {
       const r = await fetch('/api/rewrites/' + d.rewriteId + '/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accepted }) });
       const dd = await r.json();
-      $('applyStatus').textContent = r.ok ? T.rewriteApplied : (dd.error || T.errServer);
+      if (r.ok) {
+        $('applyStatus').textContent = T.rewriteApplied;
+        const box = document.getElementById('exportBox');
+        if (box && dd.resumeId) {
+          box.style.display = '';
+          box.dataset.resumeId = dd.resumeId;
+          const pdfBtn = document.getElementById('exportPdfBtn');
+          const docBtn = document.getElementById('exportDocBtn');
+          if (pdfBtn) pdfBtn.addEventListener('click', () => doExport(dd.resumeId, 'pdf'));
+          if (docBtn) docBtn.addEventListener('click', () => doExport(dd.resumeId, 'doc'));
+        }
+      } else {
+        $('applyStatus').textContent = dd.error || T.errServer;
+      }
     } catch (e) { $('applyStatus').textContent = T.errServer; }
     finally { applyBtn.disabled = false; }
   });
   $('rewriteResult').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+// ---- 导出：扣 1 次 export 额度，拿到 token 后打开导出页（PDF 新标签页打印页，Word 直接下载 .doc） ----
+async function doExport(resumeId, format) {
+  const btn = format === 'pdf' ? document.getElementById('exportPdfBtn') : document.getElementById('exportDocBtn');
+  const st = document.getElementById('exportStatus');
+  if (!btn) return;
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = T.exporting;
+  if (st) st.textContent = T.exporting;
+  try {
+    const tpl = (document.getElementById('exportTpl') || {}).value || '';
+    const r = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resumeId, format, templateId: tpl }) });
+    const d = await r.json();
+    if (!r.ok) {
+      if (st) {
+        st.textContent = d.error || T.errServer;
+        if (d.code === 'no_export_credits') {
+          const a = document.createElement('a');
+          a.href = LANG === 'en' ? '/en/orders/new' : '/orders/new';
+          a.textContent = ' ' + T.exportBuy;
+          st.appendChild(a);
+        }
+      }
+      return;
+    }
+    if (st) st.textContent = '';
+    if (format === 'pdf') window.open(d.url, '_blank');
+    else { const a = document.createElement('a'); a.href = d.url; a.click(); }
+  } catch (e) { if (st) st.textContent = T.errServer; }
+  finally { btn.disabled = false; btn.textContent = orig; }
 }
 $('rewriteBtn').addEventListener('click', async () => {
   const resume = $('resume').value.trim();

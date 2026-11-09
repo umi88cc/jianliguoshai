@@ -252,3 +252,16 @@ CREATE TABLE IF NOT EXISTS paypal_events (
   payload TEXT,
   created_at INTEGER NOT NULL
 );
+
+-- ============ 第 4 周：导出 token ============
+-- export_tokens：导出凭证（POST /api/export 扣 1 次 export 额度后发 30 分钟 token；
+-- GET /export/:token 渲染 PDF 打印页或 Word .doc；token 只认本人简历，不可猜）
+CREATE TABLE IF NOT EXISTS export_tokens (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  resume_id INTEGER NOT NULL,
+  format TEXT NOT NULL,
+  template_id TEXT,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
