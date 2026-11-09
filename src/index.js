@@ -1636,6 +1636,22 @@ export default {
       console.error("task queue error", e);
     }
     try {
+      // 游客数据 24h 清理（规划 §5）：游客评分不登录，analyses 里 resume_id 为空；
+      // 超过 24 小时的游客评分记录和过期的邮箱验证码一并清掉，登录用户的记录不动。
+      // 之前漏了这段，analyses 已积压过期行。
+      const cutoff = Date.now() - 24 * 3600 * 1000;
+      const a = await env.DB.prepare(
+        "DELETE FROM analyses WHERE resume_id IS NULL AND created_at < ?",
+      ).bind(cutoff).run().catch(() => null);
+      const e = await env.DB.prepare(
+        "DELETE FROM email_codes WHERE expires_at < ?",
+      ).bind(Date.now()).run().catch(() => null);
+      const cleaned = (a?.meta?.changes || 0) + (e?.meta?.changes || 0);
+      if (cleaned > 0) console.log("guest cleanup", { analyses: a?.meta?.changes || 0, email_codes: e?.meta?.changes || 0 });
+    } catch (e) {
+      console.error("guest cleanup error", e);
+    }
+    try {
       const r = await remindStaleReviewOrders(env.DB, env);
       if (r.reminded > 0)
         console.log("stale review orders reminded", r.reminded);

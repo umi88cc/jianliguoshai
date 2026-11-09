@@ -9,28 +9,71 @@ import { callChatModel, getRules} from './ai.js';
 
 const BULLET_RE = /^([•\-*·○●■▶►]|\d{1,2}[.、）)]|（\d+）)\s*/; // 数字序号只认 1-2 位，年份日期行（2018.09-…）不是 bullet
 
+// 敬称/泛指的“公司”不是真实雇主名，不参与编造检查（如求职信里必写的“贵公司”）
+// 注意：只排除整词或以敬称结尾的词（如“我关注到贵公司”），
+// 不排除以“贵”开头的真实公司名（如“贵州茅台集团”）
+const HONORIFIC_COMPANIES = new Set([
+'贵公司', '贵集团', '贵司', '贵单位', '贵校', '贵院',
+'我公司', '本公司', '我司', '贵方', '我方',
+]);
+function isHonorificCompany(name) {
+return [...HONORIFIC_COMPANIES].some((h) => name === h || String(name || '').endsWith(h));
+}
+
 // ---------- 事实抽取（防编造检查用） ----------
 export function extractFacts(text) {
 const t = String(text || '');
+// 日期：YYYY.MM / YYYY年MM月 / YYYY-MM，归一化成 YYYYMM，同时记年份 YYYY；
+// 裸年份 YYYY年、年份区间 YYYY-YYYY 也只记年份，不记数字。
+// 月份必须 1-12，否则不是日期（如年份区间 2022-2025 里的“20”）。
+const dates = new Set();
+for (const m of t.matchAll(/(\d{4})[./年-](\d{1,2})/g)) {
+const mo = Number(m[2]);
+if (mo < 1 || mo > 12) continue;
+dates.add(`${m[1]}${String(mo).padStart(2, '0')}`);
+dates.add(m[1]);
+}
+for (const m of t.matchAll(/(\d{4})年/g)) dates.add(m[1]);
+for (const m of t.matchAll(/(\d{4})\s*[-–—~至]\s*(\d{4})/g)) {
+dates.add(m[1]);
+dates.add(m[2]);
+}
 // 数字：归一化（去逗号/空格，％→%，万/元/人等单位保留在数值串里比对时去掉单位只比数字本身）
+// 日期的一部分不算数字：YYYY.MM 整体、YYYY年MM月 / YYYY-MM 的年和月、
+// 裸年份 YYYY年、年份区间 YYYY-YYYY 的两端——这些都在 dates 里比对，
+// 否则简历写 2023.07、信里写 2023年7月会被拆成 2023 和 7 双双判违规。
 const numbers = new Set();
 for (const m of t.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(?:%|％|万|元|人|个|倍|k|K|w|亿)?/g)) {
 const n = m[1].replace(/,/g, '');
-if (n) numbers.add(n);
+if (!n) continue;
+const start = m.index;
+const end = start + m[1].length;
+const before = t.slice(Math.max(0, start - 8), start);
+const after = t.slice(end, end + 5).trimStart();
+if (/^\d{4}\.\d{1,2}$/.test(n)) {
+const mo = Number(n.split('.')[1]);
+if (mo >= 1 && mo <= 12) continue; // YYYY.MM 日期整体
+}
+if (/^(?:19|20)\d{2}$/.test(n)) {
+// 年份：后面跟 年 / 分隔符+月份数字，或前面是 年份+分隔符（区间后段）
+if (/^年/.test(after) || /^[./–—~至-]+\s*\d/.test(after)) continue;
+if (/(?:19|20)\d{2}\s*[./年–—~至-]+\s*$/.test(before)) continue;
+}
+if (/^\d{1,2}$/.test(n) && /(?:19|20)\d{2}\s*[./年-]\s*$/.test(before)) continue; // 月份
+numbers.add(n);
 }
 // 公司：含组织后缀的词 + 经历区“日期段 + 公司名”表头的公司名（如“2022.07-至今 字节跳动 高级产品经理”）
 const companies = new Set();
 for (const m of t.matchAll(/[\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9·]{1,15}(公司|科技|集团|有限公司|工作室|银行|证券|大学|学院|医院|事务所)/g)) {
+if (isHonorificCompany(m[0])) continue;
 companies.add(m[0]);
 }
 for (const line of t.split('\n')) {
 const m = line.match(/^\s*\d{4}[./年-]\d{1,2}\s*[-–—~至]\s*(?:\d{4}[./年-]\d{1,2}|至今|现在|目前)?\s+([^\s，,。；;]{2,20})/);
-if (m) companies.add(m[1].replace(/(高级|资深|初级|产品经理|工程师|主管|经理|总监|实习生|助理).*$/, '').trim());
+if (m) {
+const c = m[1].replace(/(高级|资深|初级|产品经理|工程师|主管|经理|总监|实习生|助理).*$/, '').trim();
+if (c && !isHonorificCompany(c)) companies.add(c);
 }
-// 日期：YYYY.MM / YYYY年MM月 / YYYY-MM，归一化成 YYYYMM
-const dates = new Set();
-for (const m of t.matchAll(/(\d{4})[./年-](\d{1,2})/g)) {
-dates.add(`${m[1]}${String(m[2]).padStart(2, '0')}`);
 }
 return { numbers, companies, dates};
 }
@@ -50,9 +93,38 @@ for (const n of rw.numbers) {
 if (!orig.numbers.has(n)) violations.push({ type: 'number', value: n});
 }
 for (const c of rw.companies) {
+if (isHonorificCompany(c)) continue;
 if (!orig.companies.has(c) &&!String(originalText).includes(c)) {
 violations.push({ type: 'company', value: c});
 }
+}
+for (const d of rw.dates) {
+if (!orig.dates.has(d)) violations.push({ type: 'date', value: d});
+}
+return { ok: violations.length === 0, violations};
+}
+
+// 求职信专用防编造检查：白名单是 简历 + JD + 目标公司名 三者并集。
+// 求职信提示词明确要求结合 JD 和公司名写：JD 里的数字（如“3 年以上”）和公司名
+// 本来就是合法事实，不能按改写的“只认简历原文”判编造。
+// 公司名允许加组织后缀的形态（如白名单是“字节跳动”，信里写“字节跳动有限公司”）。
+// 底线不变：三者之外的公司、数字、日期照样拦截。
+export function checkCoverLetterFabrication(resumeText, jdText, company, letter) {
+const sources = [resumeText, jdText, company].filter(Boolean).join('\n');
+const orig = extractFacts(sources);
+const companyName = String(company || '').trim();
+if (companyName) orig.companies.add(companyName);
+const rw = extractFacts(stripPlaceholders(letter));
+const violations = [];
+for (const n of rw.numbers) {
+if (!orig.numbers.has(n)) violations.push({ type: 'number', value: n});
+}
+for (const c of rw.companies) {
+if (isHonorificCompany(c)) continue;
+if (orig.companies.has(c)) continue;
+if (sources.includes(c)) continue;
+if ([...orig.companies].some((oc) => c.includes(oc) || oc.includes(c))) continue;
+violations.push({ type: 'company', value: c});
 }
 for (const d of rw.dates) {
 if (!orig.dates.has(d)) violations.push({ type: 'date', value: d});
@@ -299,7 +371,7 @@ try {
 const data = parseAiJson(ai.content);
 let letter = String(data.letter || '').trim();
 if (!letter) throw new Error('empty letter');
-const check = checkFabrication(resumeText, letter);
+const check = checkCoverLetterFabrication(resumeText, jdText, company, letter);
 if (!check.ok) {
 return { ok: false, error: `求职信未通过防编造检查（${check.violations.map((v) => `${v.type}:${v.value}`).join('、')}），已拦截`, source: 'ai', violations: check.violations};
 }
