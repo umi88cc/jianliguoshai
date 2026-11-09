@@ -54,3 +54,21 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   count INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
 );
+
+-- orders：订单表（第 2 周支付接；USDT 监听先建表，TxID 唯一防重复开通）。
+-- amount 存分（整数）；method 取 wechat / alipay / paypal / usdt；status 取 pending / paid /
+-- review_pending / done / cancelled / rejected；txid UNIQUE：同一笔 USDT/PayPal 交易只能开一次通。
+-- amount_usdt_sun：USDT 订单的精确应付金额（单位 sun，1 USDT = 1e6 sun，含尾数如 1.9913 → 1991300），
+-- 监听按它与链上 value 精确比对，一分不能差；非 USDT 订单为 NULL。
+CREATE TABLE IF NOT EXISTS orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  plan TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  amount_usdt_sun INTEGER,
+  method TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  txid TEXT UNIQUE,
+  created_at INTEGER NOT NULL,
+  reviewed_by INTEGER
+);
